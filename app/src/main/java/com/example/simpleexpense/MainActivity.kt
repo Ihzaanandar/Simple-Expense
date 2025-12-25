@@ -1,61 +1,62 @@
 package com.example.simpleexpense
 
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import android.widget.Spinner
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.example.simpleexpense.databinding.ActivityMainBinding
+import com.example.simpleexpense.databinding.DialogSummaryBinding
+import kotlinx.coroutines.launch
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var rvMonthYears: RecyclerView
-    private lateinit var fabAddMonth: FloatingActionButton
+    private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: MonthYearAdapter
-    private lateinit var database: ExpenseDatabase
-    private lateinit var emptyView: View
+    // FIX: Use the correct, consistent database class name
+    private val db by lazy { ExpenseDatabase.getInstance(this).expenseDao() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        database = ExpenseDatabase(this)
-
-        rvMonthYears = findViewById(R.id.rvMonthYears)
-        fabAddMonth = findViewById(R.id.fabAddMonth)
-        emptyView = findViewById(R.id.emptyView)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
         setupRecyclerView()
-        loadMonthYears()
 
-        fabAddMonth.setOnClickListener {
+        binding.fabAddMonth.setOnClickListener {
             showAddMonthDialog()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        loadMonthYears()
     }
 
     private fun setupRecyclerView() {
         adapter = MonthYearAdapter(emptyList()) { monthYear ->
             showMonthOptionsDialog(monthYear)
         }
-        rvMonthYears.layoutManager = LinearLayoutManager(this)
-        rvMonthYears.adapter = adapter
+        binding.rvMonthYears.layoutManager = LinearLayoutManager(this)
+        binding.rvMonthYears.adapter = adapter
     }
 
     private fun loadMonthYears() {
-        val monthYears = database.getAllMonthYears()
-        adapter.updateData(monthYears)
-
-        if (monthYears.isEmpty()) {
-            emptyView.visibility = View.VISIBLE
-            rvMonthYears.visibility = View.GONE
-        } else {
-            emptyView.visibility = View.GONE
-            rvMonthYears.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            val monthYears = db.getAllMonthYears()
+            adapter.updateData(monthYears)
+            binding.emptyView.visibility = if (monthYears.isEmpty()) View.VISIBLE else View.GONE
+            binding.rvMonthYears.visibility = if (monthYears.isEmpty()) View.GONE else View.VISIBLE
         }
     }
 
@@ -69,18 +70,14 @@ class MainActivity : AppCompatActivity() {
             "Juli", "Agustus", "September", "Oktober", "November", "Desember"
         )
         val monthAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, months)
-        monthAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinnerMonth.adapter = monthAdapter
 
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         val years = (currentYear - 5..currentYear + 5).map { it.toString() }
         val yearAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, years)
-        yearAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinnerYear.adapter = yearAdapter
         spinnerYear.setSelection(years.indexOf(currentYear.toString()))
-
-        val currentMonth = Calendar.getInstance().get(Calendar.MONTH)
-        spinnerMonth.setSelection(currentMonth)
+        spinnerMonth.setSelection(Calendar.getInstance().get(Calendar.MONTH))
 
         AlertDialog.Builder(this)
             .setTitle("Tambah Bulan Baru")
@@ -88,21 +85,13 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Tambah") { _, _ ->
                 val month = spinnerMonth.selectedItemPosition + 1
                 val year = spinnerYear.selectedItem.toString().toInt()
-                val monthYear = MonthYear(month, year)
+                val key = "$year-${month.toString().padStart(2, '0')}"
+                val newMonthYear = MonthYear(key, month, year)
 
-                val existingMonths = database.getAllMonthYears()
-                val exists = existingMonths.any { it.month == month && it.year == year }
-
-                if (!exists) {
-                    val intent = Intent(this, ExpenseDetailActivity::class.java)
-                    intent.putExtra("month", month)
-                    intent.putExtra("year", year)
-                    startActivity(intent)
-                } else {
-                    AlertDialog.Builder(this)
-                        .setMessage("Bulan ${monthYear.getDisplayName()} sudah ada!")
-                        .setPositiveButton("OK", null)
-                        .show()
+                lifecycleScope.launch {
+                    db.addMonthYear(newMonthYear)
+                    loadMonthYears()
+                    openExpenseDetail(newMonthYear)
                 }
             }
             .setNegativeButton("Batal", null)
@@ -110,21 +99,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showMonthOptionsDialog(monthYear: MonthYear) {
-        val options = arrayOf(
-            "Tambah Pengeluaran",
-            "Lihat Daftar Pengeluaran",
-            "Lihat Rangkuman",
-            "Hapus Bulan Ini"
-        )
-
+        val options = arrayOf("Lihat & Tambah Pengeluaran", "Lihat Rangkuman", "Hapus Bulan Ini")
         AlertDialog.Builder(this)
             .setTitle(monthYear.getDisplayName())
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> openExpenseDetail(monthYear)
-                    1 -> openExpenseDetail(monthYear)
-                    2 -> showSummary(monthYear)
-                    3 -> confirmDeleteMonth(monthYear)
+                    1 -> showSummary(monthYear)
+                    2 -> confirmDeleteMonth(monthYear)
                 }
             }
             .show()
@@ -132,31 +114,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun openExpenseDetail(monthYear: MonthYear) {
         val intent = Intent(this, ExpenseDetailActivity::class.java)
-        intent.putExtra("month", monthYear.month)
-        intent.putExtra("year", monthYear.year)
+        intent.putExtra("MONTH_YEAR_KEY", monthYear.key)
         startActivity(intent)
     }
 
     private fun showSummary(monthYear: MonthYear) {
-        val summary = database.getSummary(monthYear)
-        val message = buildString {
-            append("Total Pengeluaran:\n")
-            append("Rp ${String.format("%,.0f", summary.totalExpense)}\n\n")
-            append("Jumlah Transaksi: ${summary.expenseCount}\n\n")
+        lifecycleScope.launch {
+            val totalExpense = db.getTotalExpenseForMonth(monthYear.key) ?: 0.0
+            val expenseCount = db.getExpenseCountForMonth(monthYear.key)
+            val paymentMethodSummaries = db.getExpenseByPaymentMethod(monthYear.key)
 
-            if (summary.byPaymentMethod.isNotEmpty()) {
-                append("Per Metode Pembayaran:\n")
-                summary.byPaymentMethod.forEach { (method, amount) ->
-                    append("• $method: Rp ${String.format("%,.0f", amount)}\n")
-                }
+            val prefs = getSharedPreferences("BudgetPrefs", Context.MODE_PRIVATE)
+            val initialAmount = prefs.getFloat("initial_amount_${monthYear.key}", 0f).toDouble()
+            val remainingAmount = initialAmount - totalExpense
+
+            val dialogBinding = DialogSummaryBinding.inflate(layoutInflater)
+
+            dialogBinding.tvInitialAmount.text = "Rp ${String.format("%,.0f", initialAmount)}"
+            dialogBinding.tvTotalExpense.text = "- Rp ${String.format("%,.0f", totalExpense)}"
+            dialogBinding.tvRemainingAmount.text = "Rp ${String.format("%,.0f", remainingAmount)}"
+            dialogBinding.tvTransactionCount.text = expenseCount.toString()
+
+            val remainingColor = when {
+                remainingAmount < 0 -> ContextCompat.getColor(this@MainActivity, R.color.negative_amount)
+                else -> ContextCompat.getColor(this@MainActivity, R.color.positive_amount)
             }
-        }
+            dialogBinding.tvRemainingAmount.setTextColor(remainingColor)
 
-        AlertDialog.Builder(this)
-            .setTitle("Rangkuman ${monthYear.getDisplayName()}")
-            .setMessage(message)
-            .setPositiveButton("OK", null)
-            .show()
+            if (paymentMethodSummaries.isNotEmpty()) {
+                dialogBinding.containerPaymentMethods.visibility = View.VISIBLE
+                val inflater = LayoutInflater.from(this@MainActivity)
+                paymentMethodSummaries.forEach { summary ->
+                    val row = inflater.inflate(R.layout.summary_item_row, dialogBinding.containerPaymentMethods, false) as LinearLayout
+                    val tvMethod = row.findViewById<TextView>(R.id.tvMethod)
+                    val tvAmount = row.findViewById<TextView>(R.id.tvAmount)
+                    tvMethod.text = "• ${summary.paymentMethod}"
+                    tvAmount.text = "Rp ${String.format("%,.0f", summary.total)}"
+                    dialogBinding.containerPaymentMethods.addView(row)
+                }
+            } else {
+                dialogBinding.containerPaymentMethods.visibility = View.GONE
+            }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("Rangkuman ${monthYear.getDisplayName()}")
+                .setView(dialogBinding.root)
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 
     private fun confirmDeleteMonth(monthYear: MonthYear) {
@@ -164,15 +169,15 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Hapus Bulan")
             .setMessage("Yakin ingin menghapus semua data ${monthYear.getDisplayName()}?")
             .setPositiveButton("Hapus") { _, _ ->
-                database.deleteMonthYear(monthYear)
-                loadMonthYears()
+                lifecycleScope.launch {
+                    db.deleteExpensesForMonth(monthYear.key)
+                    db.deleteMonthYear(monthYear.key)
+                    val prefs = getSharedPreferences("BudgetPrefs", Context.MODE_PRIVATE)
+                    prefs.edit().remove("initial_amount_${monthYear.key}").apply()
+                    loadMonthYears()
+                }
             }
             .setNegativeButton("Batal", null)
             .show()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        loadMonthYears()
     }
 }

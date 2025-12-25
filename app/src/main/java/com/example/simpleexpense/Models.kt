@@ -1,14 +1,24 @@
 package com.example.simpleexpense
 
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "expenses")
 data class Expense(
+    @PrimaryKey
     val id: String,
     val amount: Double,
     val paymentMethod: String,
     val description: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    // Foreign key to link to a MonthYear
+    val monthYearKey: String
 )
 
+@Entity(tableName = "month_years")
 data class MonthYear(
+    @PrimaryKey
+    val key: String, // Example: "2025-12"
     val month: Int,
     val year: Int
 ) {
@@ -19,10 +29,9 @@ data class MonthYear(
         )
         return "${months[month - 1]} $year"
     }
-
-    fun getKey(): String = "$year-${month.toString().padStart(2, '0')}"
 }
 
+// This is no longer a database entity, just a helper class for summaries.
 data class ExpenseSummary(
     val totalExpense: Double,
     val expenseCount: Int,

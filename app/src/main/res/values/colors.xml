@@ -6,4 +6,9 @@
     <color name="green_700">#388E3C</color>
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
+
+    <!-- Budget Colors -->
+    <color name="positive_amount">#2196F3</color> <!-- Blue -->
+    <color name="negative_amount">#F44336</color> <!-- Red -->
+    <color name="neutral_amount">#000000</color>  <!-- Black -->
 </resources>
